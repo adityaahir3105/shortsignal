@@ -200,6 +200,7 @@ function emptyHtml() {
 }
 
 async function load() {
+  feedEl.querySelectorAll(".card").forEach(unmount); // release players from the previous list
   feedEl.innerHTML = `<section class="card end"><div class="end-inner muted">Loading…</div></section>`;
   const { items } = await backend.feed(state.mode, state.topic);
   state.items = items;
@@ -313,41 +314,94 @@ function updateSoundButton(card) {
   b.setAttribute("aria-label", on ? "Mute" : "Turn sound on");
 }
 
-async function mountYouTube(card, v) {
+// ---------- Preloading, like Shorts ----------
+// While you watch one video, the next one is loaded and its first second
+// buffered in the background (muted, held at 0:00), so a swipe starts it
+// instantly. The previous one stays loaded for swiping back; anything further
+// away is unloaded to save data and memory.
+const KEEP_AROUND = 1;
+
+function mountYouTube(card, v) {
+  if (card._mounting) return;
+  card._mounting = true;
   const media = $(".media", card);
-  const host = document.createElement("div");
-  host.className = "yt-host";
-  media.insertBefore(host, $(".tapzone", media) ?? null);
-  let YT;
-  try {
-    YT = await loadYouTubeApi();
-  } catch {
-    setBlocked(card, true);
-    return;
-  }
-  // The viewer may have scrolled on while the API loaded.
-  if (!card.classList.contains("active") || !host.isConnected) return;
-  card._player = new YT.Player(host, {
-    host: "https://www.youtube-nocookie.com",
-    videoId: v.videoId,
-    width: "100%",
-    height: "100%",
-    playerVars: {
-      autoplay: 1, mute: 1, playsinline: 1, loop: 1, playlist: v.videoId, rel: 0, modestbranding: 1,
-      // On phones our tap / sound controls replace YouTube's, which would sit under the caption and rail.
-      controls: isPhone() ? 0 : 1,
-      origin: location.origin,
-    },
-    events: {
-      onReady: () => startPlayback(card),
-      onStateChange: (e) => {
-        if (e.data === PLAYING) onPlaying(card);
-      },
-      onError: () => setBlocked(card, true),
-    },
+  const slot = document.createElement("div");
+  slot.className = "yt-host";
+  media.insertBefore(slot, $(".tapzone", media) ?? null);
+  loadYouTubeApi()
+    .then((YT) => {
+      if (!slot.isConnected) return; // unloaded while the API was loading
+      card._player = new YT.Player(slot, {
+        host: "https://www.youtube-nocookie.com",
+        videoId: v.videoId,
+        width: "100%",
+        height: "100%",
+        playerVars: {
+          autoplay: 0, mute: 1, playsinline: 1, loop: 1, playlist: v.videoId, rel: 0, modestbranding: 1,
+          // On phones our tap / sound controls replace YouTube's, which would sit under the caption and rail.
+          controls: isPhone() ? 0 : 1,
+          origin: location.origin,
+        },
+        events: {
+          onReady: () => {
+            card._ready = true;
+            const f = $(".media iframe", card);
+            if (f) f.title = v.title;
+            if (card.classList.contains("active")) startPlayback(card);
+            else preloadBuffer(card);
+          },
+          onStateChange: (e) => {
+            if (e.data !== PLAYING) return;
+            if (card.classList.contains("active")) return onPlaying(card);
+            // A preloading (or just swiped-away) player got its first frames:
+            // hold it at the start, ready to go.
+            const p = card._player;
+            p.pauseVideo();
+            p.seekTo(0, true);
+            card._preloading = false;
+            $(".media iframe", card)?.classList.add("ready");
+          },
+          onError: () => { if (card.classList.contains("active")) setBlocked(card, true); },
+        },
+      });
+    })
+    .catch(() => {
+      card._mounting = false;
+      slot.remove();
+      if (card.classList.contains("active")) setBlocked(card, true);
+    });
+}
+
+/** Buffer the start of a video that isn't on screen yet. */
+function preloadBuffer(card) {
+  const p = card._player;
+  if (!p?.playVideo) return;
+  card._preloading = true;
+  p.mute();
+  p.playVideo(); // paused again at its first PLAYING event, see onStateChange
+}
+
+function unmount(card) {
+  clearTimeout(card._watchdog);
+  clearTimeout(card._unmuteCheck);
+  try { card._player?.destroy?.(); } catch {}
+  card._player = null;
+  card._ready = card._mounting = card._preloading = false;
+  $(".media", card)?.querySelectorAll("iframe, .yt-host").forEach((el) => el.remove());
+}
+
+/** Players for the current card and its neighbours; preload the next; unload the rest. */
+function managePlayers(current) {
+  const cards = [...feedEl.querySelectorAll(".card[data-id]")];
+  const i = cards.indexOf(current);
+  cards.forEach((c, j) => {
+    if (Math.abs(j - i) > KEEP_AROUND) {
+      if (c._player || c._mounting) unmount(c);
+    } else if (j === i + 1) {
+      const v = state.items[Number(c.dataset.index)];
+      if (v?.platform === "youtube" && !c._mounting) mountYouTube(c, v);
+    }
   });
-  const iframe = $(".media iframe", card);
-  if (iframe) iframe.title = v.title;
 }
 
 function activate(card) {
@@ -361,18 +415,22 @@ function activate(card) {
   updateSoundButton(card); // the card was rendered before any sound choice was made
   const v = state.items[Number(card.dataset.index)];
   const media = $(".media", card);
-  if (!$("iframe, .yt-host", media)) {
-    if (v.platform === "youtube") {
+  if (v.platform === "youtube") {
+    if (card._ready) {
+      card._preloading = false;
+      startPlayback(card); // preloaded: starts straight away
+    } else if (!card._mounting) {
       mountYouTube(card, v);
-    } else {
-      const f = document.createElement("iframe");
-      f.src = `https://www.instagram.com/${v.embedKind || "reel"}/${v.videoId}/embed/`;
-      f.title = v.title;
-      f.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
-      f.addEventListener("load", () => setTimeout(() => f.classList.add("ready"), 250));
-      media.appendChild(f);
-    }
+    } // else: still loading; onReady starts it because the card is now active
+  } else if (!$("iframe", media)) {
+    const f = document.createElement("iframe");
+    f.src = `https://www.instagram.com/${v.embedKind || "reel"}/${v.videoId}/embed/`;
+    f.title = v.title;
+    f.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+    f.addEventListener("load", () => setTimeout(() => f.classList.add("ready"), 250));
+    media.appendChild(f);
   }
+  managePlayers(card);
   if (!state.seenSent.has(v.id)) {
     state.seenSent.add(v.id);
     backend.feedback(v.id, "seen").catch(() => {});
@@ -385,9 +443,13 @@ function deactivate(card) {
   clearTimeout(card._watchdog);
   clearTimeout(card._unmuteCheck);
   card._triedUnmute = false;
-  try { card._player?.destroy?.(); } catch {}
-  card._player = null;
-  $(".media", card)?.querySelectorAll("iframe, .yt-host").forEach((el) => el.remove());
+  const p = card._player;
+  if (p && card._ready) {
+    // Keep the player (for swiping back), silent and back at the start.
+    try { p.mute(); p.pauseVideo(); p.seekTo(0, true); } catch {}
+  } else if (!card._mounting) {
+    $(".media", card)?.querySelectorAll("iframe").forEach((el) => el.remove()); // Instagram embed
+  }
   $(".info", card)?.classList.remove("expanded");
 }
 
