@@ -216,7 +216,7 @@ async function load() {
 // to our own "Tap to play" button if the browser (or an in-app browser like
 // LinkedIn's) still blocks it.
 
-state.sound = false;
+state.sound = (() => { try { return sessionStorage.getItem("ss-sound") === "1"; } catch { return false; } })();
 const isPhone = () => matchMedia("(max-width: 760px), (pointer: coarse)").matches;
 const PLAYING = 1, BUFFERING = 3;
 
@@ -238,29 +238,74 @@ function setBlocked(card, blocked) {
   card.classList.toggle("blocked", blocked);
 }
 
-/** Start (or retry) playback. Unmuted only if the viewer turned sound on. */
-function startPlayback(card) {
+/**
+ * Start (or retry) playback. Always starts muted, because that is what browsers
+ * allow without a tap; if the viewer has turned sound on, onPlaying() unmutes it
+ * as soon as the video is actually running. `withSound` is for calls made inside
+ * a tap, where unmuted playback is allowed straight away.
+ */
+function startPlayback(card, { withSound = false } = {}) {
   const p = card._player;
   if (!p?.playVideo) return;
-  if (state.sound) { p.unMute(); p.setVolume(100); } else p.mute();
+  if (withSound) { p.unMute(); p.setVolume(100); } else p.mute();
   p.playVideo();
   clearTimeout(card._watchdog);
+  // Generous timeout: on a slow mobile connection a video can take a few seconds
+  // to start, and that is not the same as the browser blocking it.
   card._watchdog = setTimeout(() => {
     if (!card.classList.contains("active") || card._player !== p) return;
     const s = p.getPlayerState?.();
     if (s === PLAYING || s === BUFFERING) return;
-    if (state.sound) {
-      // Sound on was refused without a fresh tap: retry muted, which browsers allow.
-      p.mute();
-      p.playVideo();
-      card._watchdog = setTimeout(() => {
-        const s2 = p.getPlayerState?.();
-        if (card._player === p && s2 !== PLAYING && s2 !== BUFFERING) setBlocked(card, true);
-      }, 1500);
-    } else {
-      setBlocked(card, true);
-    }
-  }, 1800);
+    p.mute();
+    p.playVideo();
+    card._watchdog = setTimeout(() => {
+      const s2 = p.getPlayerState?.();
+      if (card._player === p && s2 !== PLAYING && s2 !== BUFFERING) setBlocked(card, true);
+    }, 2500);
+  }, 3500);
+}
+
+/** Called each time a video starts playing: apply the viewer's sound choice. */
+function onPlaying(card) {
+  const p = card._player;
+  setBlocked(card, false);
+  card.classList.remove("paused");
+  $(".media iframe", card)?.classList.add("ready");
+  if (state.sound && p.isMuted()) {
+    p.unMute();
+    p.setVolume(100);
+    setTimeout(() => updateSoundButton(card), 300); // isMuted() updates a moment later
+    // Some browsers (mainly iPhone Safari) pause a video that is unmuted without
+    // a tap inside it. If that happens, keep it playing muted; the speaker
+    // button then shows muted and one tap brings the sound back.
+    clearTimeout(card._unmuteCheck);
+    card._unmuteCheck = setTimeout(() => {
+      if (card._player !== p) return;
+      const s = p.getPlayerState?.();
+      if (s !== PLAYING && s !== BUFFERING) { p.mute(); p.playVideo(); }
+      updateSoundButton(card);
+    }, 800);
+  }
+  updateSoundButton(card);
+}
+
+/**
+ * Is this card audible? While a video is playing that's the player's real
+ * state; while it's still loading (always muted until it starts) it's the
+ * viewer's choice, which will be applied the moment it starts.
+ */
+function audible(card) {
+  const p = card?._player;
+  if (p?.getPlayerState?.() === PLAYING) return !p.isMuted();
+  return state.sound;
+}
+
+function updateSoundButton(card) {
+  const b = card && $(".sound", card);
+  if (!b) return;
+  const on = audible(card);
+  b.innerHTML = on ? ICON.sound : ICON.muted;
+  b.setAttribute("aria-label", on ? "Mute" : "Turn sound on");
 }
 
 async function mountYouTube(card, v) {
@@ -291,11 +336,7 @@ async function mountYouTube(card, v) {
     events: {
       onReady: () => startPlayback(card),
       onStateChange: (e) => {
-        if (e.data === PLAYING) {
-          setBlocked(card, false);
-          card.classList.remove("paused");
-          $(".media iframe", card)?.classList.add("ready");
-        }
+        if (e.data === PLAYING) onPlaying(card);
       },
       onError: () => setBlocked(card, true),
     },
@@ -308,6 +349,7 @@ function activate(card) {
   if (!card || !card.dataset.id) return; // end, empty and loading cards have no player
   for (const other of feedEl.querySelectorAll(".card.active")) if (other !== card) deactivate(other);
   card.classList.add("active");
+  updateSoundButton(card); // the card was rendered before any sound choice was made
   const v = state.items[Number(card.dataset.index)];
   const media = $(".media", card);
   if (!$("iframe, .yt-host", media)) {
@@ -334,6 +376,7 @@ function activate(card) {
 function deactivate(card) {
   card.classList.remove("active", "paused", "blocked");
   clearTimeout(card._watchdog);
+  clearTimeout(card._unmuteCheck);
   try { card._player?.destroy?.(); } catch {}
   card._player = null;
   $(".media", card)?.querySelectorAll("iframe, .yt-host").forEach((el) => el.remove());
@@ -352,17 +395,17 @@ function dismissHint() {
   try { localStorage.setItem("ss-hinted", "1"); } catch {}
 }
 
+/** The viewer's sound choice. It sticks for every following video until they mute again. */
 function setSound(on) {
   state.sound = on;
+  try { sessionStorage.setItem("ss-sound", on ? "1" : "0"); } catch {}
   const card = $(".card.active");
   const p = card?._player;
   if (p?.playVideo) {
     if (on) { p.unMute(); p.setVolume(100); p.playVideo(); } else p.mute();
   }
-  document.querySelectorAll(".sound").forEach((b) => {
-    b.innerHTML = on ? ICON.sound : ICON.muted;
-    b.setAttribute("aria-label", on ? "Mute" : "Turn sound on");
-  });
+  updateSoundButton(card);
+  setTimeout(() => updateSoundButton(card), 300);
   dismissHint();
 }
 
@@ -375,10 +418,11 @@ function tapVideo(card) {
     setBlocked(card, false);
     state.sound = true;
     setSound(true);
-    return startPlayback(card);
+    return startPlayback(card, { withSound: true });
   }
-  // First tap turns sound on; after that a tap pauses / resumes.
-  if (!state.sound) return setSound(true);
+  // A tap on a silent video turns sound on (and keeps it on for the next ones);
+  // once you can hear it, a tap pauses / resumes.
+  if (!audible(card)) return setSound(true);
   const playing = [PLAYING, BUFFERING].includes(p.getPlayerState());
   card.classList.toggle("paused", playing);
   playing ? p.pauseVideo() : p.playVideo();
@@ -463,7 +507,7 @@ feedEl.addEventListener("click", (e) => {
   if (!btn) return;
   const card = btn.closest(".card");
   if (btn.dataset.act) act(card, btn.dataset.act);
-  else if (btn.classList.contains("sound")) setSound(!state.sound);
+  else if (btn.classList.contains("sound")) setSound(!audible(card));
   else if (btn.classList.contains("play")) tapVideo(card);
   else if (btn.dataset.goto) setMode(btn.dataset.goto);
 });
