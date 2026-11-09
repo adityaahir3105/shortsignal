@@ -17,7 +17,7 @@ const STATIC = window.SHORTSIGNAL_STATIC ?? null;
 
 async function makeStaticStore() {
   const [{ buildFeed, applyFeedback, DAILY_SIZE }, data] = await Promise.all([
-    import("./rank.js"),
+    import(`./rank.js${new URL(import.meta.url).search}`), // same ?v= as app.js
     fetch("data/feed.json", { cache: "no-cache" }).then((r) => r.json()),
   ]);
   const KEY = "ss-state-v1";
@@ -92,6 +92,27 @@ function deeperUrl(v) {
   return `https://www.youtube.com/results?search_query=${encodeURIComponent(q.trim())}&sp=EgIYAg%3D%3D`;
 }
 
+// Small line icons for the phone action rail (SVG, so they never turn into emoji).
+const svg = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const ICON = {
+  more: svg('<path d="M12 19V5M5 12l7-7 7 7"/>'),
+  knew: svg('<path d="M20 6 9 17l-5-5"/>'),
+  save: svg('<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/>'),
+  skip: svg('<path d="M18 6 6 18M6 6l12 12"/>'),
+  deeper: svg('<path d="M7 17 17 7M8 7h9v9"/>'),
+  muted: svg('<path d="M11 5 6 9H2v6h4l5 4zM22 9l-6 6M16 9l6 6"/>'),
+  sound: svg('<path d="M11 5 6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>'),
+};
+
+function railHtml(v) {
+  const btn = (act, label) =>
+    `<button data-act="${act}" class="act ${v.feedback === act ? "on" : ""}" aria-label="${label}">${ICON[act]}<span>${label}</span></button>`;
+  return `<nav class="rail" aria-label="Actions">
+      ${btn("more", "More")}${btn("knew", "Knew it")}${btn("save", "Save")}${btn("skip", "Skip")}
+      <a class="rail-link" href="${esc(deeperUrl(v))}" target="_blank" rel="noopener" aria-label="Go deeper: long videos">${ICON.deeper}<span>Deeper</span></a>
+    </nav>`;
+}
+
 function cardHtml(v, i) {
   const s = v.score;
   const hypeLabel = s.hype <= 2 ? "Low hype" : s.hype === 3 ? "Some hype" : "High hype";
@@ -103,7 +124,13 @@ function cardHtml(v, i) {
     <div class="media">
       ${thumb}
       <button class="play" aria-label="Play">▶</button>
+      ${v.platform === "youtube" ? `
+      <div class="tapzone" aria-hidden="true"></div>
+      <div class="paused-icon" aria-hidden="true">▶</div>
+      <button class="sound" aria-label="${state.sound ? "Mute" : "Turn sound on"}">${state.sound ? ICON.sound : ICON.muted}</button>` : ""}
+      ${i === 0 && showHint() ? `<div class="hint">Tap for sound · Swipe up for next</div>` : ""}
     </div>
+    ${railHtml(v)}
     <aside class="info">
       <div class="meta">
         <span class="platform ${v.platform}">${v.platform === "youtube" ? "YouTube" : "Instagram"}</span>
@@ -120,6 +147,7 @@ function cardHtml(v, i) {
         ${v.similar ? `<span class="chip" title="Near-duplicates hidden">+${v.similar} similar</span>` : ""}
       </div>
       ${s.takeaway ? `<p class="takeaway"><b>Takeaway</b>${esc(s.takeaway)}</p>` : ""}
+      ${s.takeaway || s.tryThis ? `<span class="expand-hint" aria-hidden="true">more</span>` : ""}
       ${s.tryThis ? `<div class="try"><b>Try this</b>${esc(s.tryThis)}</div>` : ""}
       <p class="scored muted">${s.by === "claude" ? "Scored by Claude" : STATIC ? "Keyword score" : "Quick keyword score. Run <code>npm run score</code> for Claude's take."}</p>
       <div class="actions">
@@ -185,7 +213,10 @@ async function load() {
 
 function embedSrc(v) {
   if (v.platform === "youtube") {
-    const p = new URLSearchParams({ autoplay: "1", mute: "1", playsinline: "1", loop: "1", playlist: v.videoId, rel: "0", modestbranding: "1" });
+    // enablejsapi lets our own tap/sound controls drive the player on phones.
+    const p = new URLSearchParams({ autoplay: "1", mute: "1", playsinline: "1", loop: "1", playlist: v.videoId, rel: "0", modestbranding: "1", enablejsapi: "1", origin: location.origin });
+    // On phones our tap / sound controls replace YouTube's, which would sit under the caption and rail.
+    if (isPhone()) p.set("controls", "0");
     return `https://www.youtube-nocookie.com/embed/${v.videoId}?${p}`;
   }
   return `https://www.instagram.com/${v.embedKind || "reel"}/${v.videoId}/embed/`;
@@ -203,7 +234,12 @@ function activate(card) {
     f.title = v.title;
     f.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
     f.allowFullscreen = true;
-    media.appendChild(f);
+    // Keep the thumbnail visible until the player has loaded, instead of a black box.
+    f.addEventListener("load", () => {
+      setTimeout(() => f.classList.add("ready"), 250);
+      if (v.platform === "youtube") setTimeout(() => applySound(f), 300);
+    });
+    media.insertBefore(f, $(".tapzone", media) ?? null);
   }
   if (!state.seenSent.has(v.id)) {
     state.seenSent.add(v.id);
@@ -213,8 +249,48 @@ function activate(card) {
 }
 
 function deactivate(card) {
-  card.classList.remove("active");
+  card.classList.remove("active", "paused");
   $(".media iframe", card)?.remove();
+  $(".info", card)?.classList.remove("expanded");
+}
+
+// ---------- Phone controls: tap for sound / pause, swipe stays with the feed ----------
+// On touch screens a transparent layer sits over the YouTube player, so swipes
+// scroll the feed instead of being swallowed by the iframe. Taps drive the
+// player through the YouTube iframe API (postMessage).
+
+state.sound = false;
+const isPhone = () => matchMedia("(max-width: 760px), (pointer: coarse)").matches;
+const yt = (frame, func) => frame?.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args: [] }), "*");
+const applySound = (frame) => yt(frame, state.sound ? "unMute" : "mute");
+
+function showHint() {
+  try { return !localStorage.getItem("ss-hinted"); } catch { return false; }
+}
+function dismissHint() {
+  document.querySelectorAll(".hint").forEach((h) => h.remove());
+  try { localStorage.setItem("ss-hinted", "1"); } catch {}
+}
+
+function setSound(on) {
+  state.sound = on;
+  const frame = $(".card.active iframe");
+  applySound(frame);
+  if (on) yt(frame, "playVideo");
+  document.querySelectorAll(".sound").forEach((b) => {
+    b.innerHTML = on ? ICON.sound : ICON.muted;
+    b.setAttribute("aria-label", on ? "Mute" : "Turn sound on");
+  });
+  dismissHint();
+}
+
+function tapVideo(card) {
+  if (!card.classList.contains("active")) return activate(card);
+  // First tap turns sound on (like Reels); after that a tap pauses / resumes.
+  if (!state.sound) return setSound(true);
+  const frame = $(".media iframe", card);
+  const paused = card.classList.toggle("paused");
+  yt(frame, paused ? "pauseVideo" : "playVideo");
 }
 
 let io;
@@ -264,6 +340,7 @@ async function act(card, action) {
   }
   v.feedback = undo ? null : action;
   card.querySelectorAll(".act").forEach((b) => b.classList.toggle("on", b.dataset.act === v.feedback));
+  if (navigator.userActivation?.hasBeenActive) navigator.vibrate?.(12);
   card.classList.toggle("dismissed", ["knew", "skip"].includes(v.feedback));
   if (undo) return toast("Undone");
   const name = topicName(v.score.topic);
@@ -272,13 +349,20 @@ async function act(card, action) {
 }
 
 feedEl.addEventListener("click", (e) => {
+  const tz = e.target.closest(".tapzone");
+  if (tz) return tapVideo(tz.closest(".card"));
+  // Phones: tapping the caption expands the takeaway and "Try this".
+  const info = e.target.closest(".info");
+  if (info && isPhone() && !e.target.closest("button, a")) return info.classList.toggle("expanded");
   const btn = e.target.closest("button");
   if (!btn) return;
   const card = btn.closest(".card");
   if (btn.dataset.act) act(card, btn.dataset.act);
+  else if (btn.classList.contains("sound")) setSound(!state.sound);
   else if (btn.classList.contains("play")) activate(card);
   else if (btn.dataset.goto) setMode(btn.dataset.goto);
 });
+feedEl.addEventListener("scroll", () => { if (feedEl.scrollTop > 40) dismissHint(); }, { passive: true });
 
 document.addEventListener("keydown", (e) => {
   if (e.target.closest("input, textarea, select, dialog[open]")) return;
@@ -337,7 +421,7 @@ async function refreshMeta() {
   state.meta = await backend.meta();
   const sel = $("#topic");
   const current = sel.value;
-  sel.innerHTML = `<option value="">All topics</option>` + state.meta.topics.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}${t.weight > 0 ? " ↑" : ""}</option>`).join("");
+  sel.innerHTML = `<option value="">${matchMedia("(max-width: 760px)").matches ? "Topics" : "All topics"}</option>` + state.meta.topics.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}${t.weight > 0 ? " ↑" : ""}</option>`).join("");
   sel.value = current;
 }
 

@@ -6,6 +6,7 @@
 // Instagram items and your own feedback never leave your machine.
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { ROOT, loadLibrary, loadConfig } from "../src/store.js";
 
 const OUT = path.join(ROOT, "site");
@@ -49,9 +50,18 @@ const head = [
   `<script>window.SHORTSIGNAL_STATIC = ${JSON.stringify({ repo: REPO })};</script>`,
 ].filter(Boolean).join("\n  ");
 
+// Cache-busting: a content hash on the asset URLs, so a new deploy is picked up
+// at once instead of browsers mixing a new page with yesterday's CSS/JS.
+const version = createHash("sha256")
+  .update(["app.js", "styles.css", "rank.js"].map((f) => fs.readFileSync(path.join(OUT, f))).join("\n"))
+  .digest("hex")
+  .slice(0, 10);
+
 const html = fs
   .readFileSync(path.join(ROOT, "public", "index.html"), "utf8")
   .replace(/<meta name="description"[^>]*>/, `<meta name="description" content="${description}" />`)
+  .replace('href="styles.css"', `href="styles.css?v=${version}"`)
+  .replace('src="app.js"', `src="app.js?v=${version}"`)
   .replace("</head>", `  ${head}\n</head>`);
 fs.writeFileSync(path.join(OUT, "index.html"), html);
 if (fs.existsSync(path.join(ROOT, "public", "og.jpg"))) fs.copyFileSync(path.join(ROOT, "public", "og.jpg"), path.join(OUT, "og.jpg"));
