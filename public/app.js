@@ -210,16 +210,98 @@ async function load() {
 }
 
 // ---------- Playback: only the card in view gets a live player ----------
+// YouTube videos use the official IFrame Player API. Phone browsers only allow
+// a video to start on its own when it is muted and started by script once the
+// player is ready, so we do exactly that, check it really started, and fall back
+// to our own "Tap to play" button if the browser (or an in-app browser like
+// LinkedIn's) still blocks it.
 
-function embedSrc(v) {
-  if (v.platform === "youtube") {
-    // enablejsapi lets our own tap/sound controls drive the player on phones.
-    const p = new URLSearchParams({ autoplay: "1", mute: "1", playsinline: "1", loop: "1", playlist: v.videoId, rel: "0", modestbranding: "1", enablejsapi: "1", origin: location.origin });
-    // On phones our tap / sound controls replace YouTube's, which would sit under the caption and rail.
-    if (isPhone()) p.set("controls", "0");
-    return `https://www.youtube-nocookie.com/embed/${v.videoId}?${p}`;
+state.sound = false;
+const isPhone = () => matchMedia("(max-width: 760px), (pointer: coarse)").matches;
+const PLAYING = 1, BUFFERING = 3;
+
+let ytApi;
+function loadYouTubeApi() {
+  ytApi ??= new Promise((resolve, reject) => {
+    if (window.YT?.Player) return resolve(window.YT);
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => { prev?.(); resolve(window.YT); };
+    const s = document.createElement("script");
+    s.src = "https://www.youtube.com/iframe_api";
+    s.onerror = () => { ytApi = null; reject(new Error("YouTube player failed to load")); };
+    document.head.appendChild(s);
+  });
+  return ytApi;
+}
+
+function setBlocked(card, blocked) {
+  card.classList.toggle("blocked", blocked);
+}
+
+/** Start (or retry) playback. Unmuted only if the viewer turned sound on. */
+function startPlayback(card) {
+  const p = card._player;
+  if (!p?.playVideo) return;
+  if (state.sound) { p.unMute(); p.setVolume(100); } else p.mute();
+  p.playVideo();
+  clearTimeout(card._watchdog);
+  card._watchdog = setTimeout(() => {
+    if (!card.classList.contains("active") || card._player !== p) return;
+    const s = p.getPlayerState?.();
+    if (s === PLAYING || s === BUFFERING) return;
+    if (state.sound) {
+      // Sound on was refused without a fresh tap: retry muted, which browsers allow.
+      p.mute();
+      p.playVideo();
+      card._watchdog = setTimeout(() => {
+        const s2 = p.getPlayerState?.();
+        if (card._player === p && s2 !== PLAYING && s2 !== BUFFERING) setBlocked(card, true);
+      }, 1500);
+    } else {
+      setBlocked(card, true);
+    }
+  }, 1800);
+}
+
+async function mountYouTube(card, v) {
+  const media = $(".media", card);
+  const host = document.createElement("div");
+  host.className = "yt-host";
+  media.insertBefore(host, $(".tapzone", media) ?? null);
+  let YT;
+  try {
+    YT = await loadYouTubeApi();
+  } catch {
+    setBlocked(card, true);
+    return;
   }
-  return `https://www.instagram.com/${v.embedKind || "reel"}/${v.videoId}/embed/`;
+  // The viewer may have scrolled on while the API loaded.
+  if (!card.classList.contains("active") || !host.isConnected) return;
+  card._player = new YT.Player(host, {
+    host: "https://www.youtube-nocookie.com",
+    videoId: v.videoId,
+    width: "100%",
+    height: "100%",
+    playerVars: {
+      autoplay: 1, mute: 1, playsinline: 1, loop: 1, playlist: v.videoId, rel: 0, modestbranding: 1,
+      // On phones our tap / sound controls replace YouTube's, which would sit under the caption and rail.
+      controls: isPhone() ? 0 : 1,
+      origin: location.origin,
+    },
+    events: {
+      onReady: () => startPlayback(card),
+      onStateChange: (e) => {
+        if (e.data === PLAYING) {
+          setBlocked(card, false);
+          card.classList.remove("paused");
+          $(".media iframe", card)?.classList.add("ready");
+        }
+      },
+      onError: () => setBlocked(card, true),
+    },
+  });
+  const iframe = $(".media iframe", card);
+  if (iframe) iframe.title = v.title;
 }
 
 function activate(card) {
@@ -228,18 +310,19 @@ function activate(card) {
   card.classList.add("active");
   const v = state.items[Number(card.dataset.index)];
   const media = $(".media", card);
-  if (!$("iframe", media)) {
-    const f = document.createElement("iframe");
-    f.src = embedSrc(v);
-    f.title = v.title;
-    f.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
-    f.allowFullscreen = true;
-    // Keep the thumbnail visible until the player has loaded, instead of a black box.
-    f.addEventListener("load", () => {
-      setTimeout(() => f.classList.add("ready"), 250);
-      if (v.platform === "youtube") setTimeout(() => applySound(f), 300);
-    });
-    media.insertBefore(f, $(".tapzone", media) ?? null);
+  if (!$("iframe, .yt-host", media)) {
+    if (v.platform === "youtube") {
+      mountYouTube(card, v);
+    } else {
+      const f = document.createElement("iframe");
+      f.src = `https://www.instagram.com/${v.embedKind || "reel"}/${v.videoId}/embed/`;
+      f.title = v.title;
+      f.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+      f.addEventListener("load", () => setTimeout(() => f.classList.add("ready"), 250));
+      media.appendChild(f);
+    }
+  } else if (card._player) {
+    startPlayback(card);
   }
   if (!state.seenSent.has(v.id)) {
     state.seenSent.add(v.id);
@@ -249,20 +332,17 @@ function activate(card) {
 }
 
 function deactivate(card) {
-  card.classList.remove("active", "paused");
-  $(".media iframe", card)?.remove();
+  card.classList.remove("active", "paused", "blocked");
+  clearTimeout(card._watchdog);
+  try { card._player?.destroy?.(); } catch {}
+  card._player = null;
+  $(".media", card)?.querySelectorAll("iframe, .yt-host").forEach((el) => el.remove());
   $(".info", card)?.classList.remove("expanded");
 }
 
 // ---------- Phone controls: tap for sound / pause, swipe stays with the feed ----------
 // On touch screens a transparent layer sits over the YouTube player, so swipes
-// scroll the feed instead of being swallowed by the iframe. Taps drive the
-// player through the YouTube iframe API (postMessage).
-
-state.sound = false;
-const isPhone = () => matchMedia("(max-width: 760px), (pointer: coarse)").matches;
-const yt = (frame, func) => frame?.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args: [] }), "*");
-const applySound = (frame) => yt(frame, state.sound ? "unMute" : "mute");
+// scroll the feed instead of being swallowed by the iframe.
 
 function showHint() {
   try { return !localStorage.getItem("ss-hinted"); } catch { return false; }
@@ -274,9 +354,11 @@ function dismissHint() {
 
 function setSound(on) {
   state.sound = on;
-  const frame = $(".card.active iframe");
-  applySound(frame);
-  if (on) yt(frame, "playVideo");
+  const card = $(".card.active");
+  const p = card?._player;
+  if (p?.playVideo) {
+    if (on) { p.unMute(); p.setVolume(100); p.playVideo(); } else p.mute();
+  }
   document.querySelectorAll(".sound").forEach((b) => {
     b.innerHTML = on ? ICON.sound : ICON.muted;
     b.setAttribute("aria-label", on ? "Mute" : "Turn sound on");
@@ -286,11 +368,20 @@ function setSound(on) {
 
 function tapVideo(card) {
   if (!card.classList.contains("active")) return activate(card);
-  // First tap turns sound on (like Reels); after that a tap pauses / resumes.
+  const p = card._player;
+  // Blocked from starting on its own: this tap is the user gesture the browser wants.
+  // Like Reels, a tap that starts a video starts it with sound.
+  if (card.classList.contains("blocked") || !p?.getPlayerState) {
+    setBlocked(card, false);
+    state.sound = true;
+    setSound(true);
+    return startPlayback(card);
+  }
+  // First tap turns sound on; after that a tap pauses / resumes.
   if (!state.sound) return setSound(true);
-  const frame = $(".media iframe", card);
-  const paused = card.classList.toggle("paused");
-  yt(frame, paused ? "pauseVideo" : "playVideo");
+  const playing = [PLAYING, BUFFERING].includes(p.getPlayerState());
+  card.classList.toggle("paused", playing);
+  playing ? p.pauseVideo() : p.playVideo();
 }
 
 let io;
@@ -306,7 +397,21 @@ function observe() {
     { root: feedEl, threshold: [0, 0.6] },
   );
   feedEl.querySelectorAll(".card").forEach((c) => io.observe(c));
+  setTimeout(activateCardInView, 300);
 }
+
+// Backup to the observer: once scrolling settles, play whichever card fills the
+// screen. Cards are exactly one screen tall, so it's scrollTop / height.
+function activateCardInView() {
+  const cards = feedEl.querySelectorAll(".card");
+  const card = cards[Math.round(feedEl.scrollTop / Math.max(1, feedEl.clientHeight))];
+  if (card && card.dataset.id && !card.classList.contains("active")) activate(card);
+}
+let settleTimer;
+feedEl.addEventListener("scroll", () => {
+  clearTimeout(settleTimer);
+  settleTimer = setTimeout(activateCardInView, 150);
+}, { passive: true });
 
 function updateProgress(index) {
   const show = state.mode === "daily" && state.items.length > 0;
@@ -359,7 +464,7 @@ feedEl.addEventListener("click", (e) => {
   const card = btn.closest(".card");
   if (btn.dataset.act) act(card, btn.dataset.act);
   else if (btn.classList.contains("sound")) setSound(!state.sound);
-  else if (btn.classList.contains("play")) activate(card);
+  else if (btn.classList.contains("play")) tapVideo(card);
   else if (btn.dataset.goto) setMode(btn.dataset.goto);
 });
 feedEl.addEventListener("scroll", () => { if (feedEl.scrollTop > 40) dismissHint(); }, { passive: true });
