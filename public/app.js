@@ -10,6 +10,57 @@ const api = async (path, body) => {
   return data;
 };
 
+// ---------- Data layer ----------
+// Local app: talks to server.js. Public site (GitHub Pages): reads a prebuilt
+// data/feed.json and keeps each visitor's feedback in their own browser.
+const STATIC = window.SHORTSIGNAL_STATIC ?? null;
+
+async function makeStaticStore() {
+  const [{ buildFeed, applyFeedback, DAILY_SIZE }, data] = await Promise.all([
+    import("./rank.js"),
+    fetch("data/feed.json", { cache: "no-cache" }).then((r) => r.json()),
+  ]);
+  const KEY = "ss-state-v1";
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY)) || {}; } catch {}
+  const lib = {
+    videos: Object.fromEntries(data.videos.map((v) => [v.id, v])),
+    feedback: saved.feedback || {},
+    seen: saved.seen || {},
+    topicWeights: saved.topicWeights || {},
+    daily: saved.daily || null,
+  };
+  const persist = () => {
+    try { localStorage.setItem(KEY, JSON.stringify({ feedback: lib.feedback, seen: lib.seen, topicWeights: lib.topicWeights, daily: lib.daily })); } catch {}
+  };
+  return {
+    meta: () => ({
+      topics: data.topics.map((t) => ({ ...t, weight: lib.topicWeights[t.id] ?? 0 })),
+      dailySize: DAILY_SIZE,
+      claude: data.videos.some((v) => v.score.by === "claude"),
+      generatedAt: data.generatedAt,
+      counts: { total: data.videos.length, relevant: data.videos.length, saved: Object.values(lib.feedback).filter((f) => f.action === "save").length },
+    }),
+    feed: (mode, topic) => {
+      const items = buildFeed(lib, { mode, topic });
+      persist();
+      return { items: items.map((v) => ({ ...v, feedback: lib.feedback[v.id]?.action ?? null })) };
+    },
+    feedback: (id, action) => {
+      applyFeedback(lib, id, action);
+      persist();
+      return { ok: true };
+    },
+  };
+}
+
+const store = STATIC ? await makeStaticStore() : null;
+const backend = {
+  meta: async () => (store ? store.meta() : api("/api/meta")),
+  feed: async (mode, topic) => (store ? store.feed(mode, topic) : api(`/api/feed?${new URLSearchParams({ mode, topic })}`)),
+  feedback: async (id, action) => (store ? store.feedback(id, action) : api("/api/feedback", { id, action })),
+};
+
 function ago(iso) {
   if (!iso) return "";
   const d = (Date.now() - new Date(iso).getTime()) / 86400e3;
@@ -70,7 +121,7 @@ function cardHtml(v, i) {
       </div>
       ${s.takeaway ? `<p class="takeaway"><b>Takeaway</b>${esc(s.takeaway)}</p>` : ""}
       ${s.tryThis ? `<div class="try"><b>Try this</b>${esc(s.tryThis)}</div>` : ""}
-      <p class="scored muted">${s.by === "claude" ? "Scored by Claude" : "Quick keyword score. Run <code>npm run score</code> for Claude's take."}</p>
+      <p class="scored muted">${s.by === "claude" ? "Scored by Claude" : STATIC ? "Keyword score" : "Quick keyword score. Run <code>npm run score</code> for Claude's take."}</p>
       <div class="actions">
         <button data-act="more" class="act ${v.feedback === "more" ? "on" : ""}" title="More like this (M)">↑ Teach me more</button>
         <button data-act="knew" class="act ${v.feedback === "knew" ? "on" : ""}" title="I knew this, hide it (X)">✓ Knew this</button>
@@ -94,25 +145,35 @@ function endCardHtml() {
       <h2>That's your ${state.items.length} for today.</h2>
       <p class="muted">Stopping here is the point. Come back tomorrow for a new set, or keep going in Explore.</p>
       <button class="btn-primary" data-goto="explore">Explore more</button>
+      ${creditHtml()}
     </div>
   </section>`;
+}
+
+function creditHtml() {
+  if (!STATIC) return "";
+  const updated = state.meta?.generatedAt ? ` · Updated ${ago(state.meta.generatedAt)}` : "";
+  return `<p class="credit muted">${state.meta?.counts.total ?? 0} videos${updated} · Inspired by Karpathy's
+    <a href="https://hackertube.org" target="_blank" rel="noopener">HackerTube</a> ·
+    <a href="${esc(STATIC.repo)}" target="_blank" rel="noopener">Code on GitHub</a></p>`;
 }
 
 function emptyHtml() {
   const c = state.meta?.counts ?? {};
   const msg = {
-    daily: c.total ? "You've seen everything relevant. Run <code>npm run fetch</code> for new videos." : "Your library is empty. Run <code>npm run fetch</code> to pull Shorts from AI channels.",
+    daily: STATIC
+      ? "You've seen everything for now. New videos arrive every morning, or keep going in Explore."
+      : c.total ? "You've seen everything relevant. Run <code>npm run fetch</code> for new videos." : "Your library is empty. Run <code>npm run fetch</code> to pull Shorts from AI channels.",
     explore: "Nothing here for this topic yet.",
     saves: "No Instagram saves yet. Export your data from Instagram and run <code>npm run import:instagram -- &lt;folder&gt;</code>, or paste a reel with <b>+ Add</b>.",
     saved: "Nothing saved yet. Tap ★ Save on a video to keep it here.",
   }[state.mode];
-  return `<section class="card end"><div class="end-inner"><div class="big">📭</div><p>${msg}</p></div></section>`;
+  return `<section class="card end"><div class="end-inner"><div class="big">📭</div><p>${msg}</p>${creditHtml()}</div></section>`;
 }
 
 async function load() {
   feedEl.innerHTML = `<section class="card end"><div class="end-inner muted">Loading…</div></section>`;
-  const params = new URLSearchParams({ mode: state.mode, topic: state.topic });
-  const { items } = await api(`/api/feed?${params}`);
+  const { items } = await backend.feed(state.mode, state.topic);
   state.items = items;
   feedEl.innerHTML = items.length ? items.map(cardHtml).join("") + endCardHtml() : emptyHtml();
   feedEl.scrollTop = 0;
@@ -146,7 +207,7 @@ function activate(card) {
   }
   if (!state.seenSent.has(v.id)) {
     state.seenSent.add(v.id);
-    api("/api/feedback", { id: v.id, action: "seen" }).catch(() => {});
+    backend.feedback(v.id, "seen").catch(() => {});
   }
   updateProgress(Number(card.dataset.index));
 }
@@ -197,7 +258,7 @@ async function act(card, action) {
   const v = state.items[Number(card.dataset.index)];
   const undo = v.feedback === action;
   try {
-    await api("/api/feedback", { id: v.id, action: undo ? "undo" : action });
+    await backend.feedback(v.id, undo ? "undo" : action);
   } catch (err) {
     return toast(`Couldn't save that: ${err.message}`);
   }
@@ -273,7 +334,7 @@ $("#addForm").addEventListener("submit", async (e) => {
 });
 
 async function refreshMeta() {
-  state.meta = await api("/api/meta");
+  state.meta = await backend.meta();
   const sel = $("#topic");
   const current = sel.value;
   sel.innerHTML = `<option value="">All topics</option>` + state.meta.topics.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}${t.weight > 0 ? " ↑" : ""}</option>`).join("");
@@ -281,8 +342,17 @@ async function refreshMeta() {
 }
 
 (async () => {
+  if (STATIC) {
+    // Public site: no server to add videos to, and no one's Instagram saves.
+    $('.tabs [data-mode="saves"]').remove();
+    $("#addBtn").remove();
+    const gh = $("#repoLink");
+    gh.href = STATIC.repo;
+    gh.hidden = false;
+  }
   await refreshMeta();
   let saved = "daily";
   try { saved = localStorage.getItem("ss-mode") || "daily"; } catch {}
-  setMode(["daily", "explore", "saves", "saved"].includes(saved) ? saved : "daily");
+  const modes = STATIC ? ["daily", "explore", "saved"] : ["daily", "explore", "saves", "saved"];
+  setMode(modes.includes(saved) ? saved : "daily");
 })();

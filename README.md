@@ -19,6 +19,14 @@ Optional keys go in `.env` (copy `.env.example`):
 
 Daily refresh: `npm run refresh` (fetch + score). You can schedule it with Windows Task Scheduler or cron.
 
+## Public site
+
+Live at **https://adityaahir3105.github.io/shortsignal/**. It's rebuilt every morning at 07:00 IST by [.github/workflows/pages.yml](.github/workflows/pages.yml): fetch new Shorts, score them, build a static site with `npm run build:static`, and deploy to GitHub Pages.
+
+The public site is read-only. Each visitor's "Teach me more", "Knew this" and "Saved" are kept in their own browser. Instagram saves and your local feedback are never published.
+
+To turn on YouTube search and Claude scoring for the daily build, add `YOUTUBE_API_KEY` and `ANTHROPIC_API_KEY` under Settings → Secrets and variables → Actions.
+
 ## Where videos come from
 
 1. **YouTube channel RSS feeds** (no key). Each channel in [config/channels.json](config/channels.json) has a public feed of its latest 15 uploads. Shorts are linked as `/shorts/`, so only those are kept. Add your favourite creators there.

@@ -1,0 +1,33 @@
+{
+  "_comment": "Cache of @handle -> channel id, so fetch does not need to look them up. Updated automatically.",
+  "ids": {
+    "@anthropic-ai": "UCrDwWp7EBBv4NwvScIpBDOA",
+    "@AndrejKarpathy": "UCXUPKJO5MZQN11PqgIvyuvQ",
+    "@aiexplained-official": "UCNJ1Ymd5yFuUPtn21xtRbbw",
+    "@Fireship": "UCsBjURrPoezykLs9EqgamOA",
+    "@OpenAI": "UCXZCJLdBC09xxGZ6gcdrc6A",
+    "@GoogleDeepMind": "UCP7jMXSY2xbc3KCAE0MHQ-A",
+    "@TwoMinutePapers": "UCbfYPyITQ-7l4upoX8nvctg",
+    "@matthew_berman": "UCawZsQWqfGSbCI5yjkdVkTA",
+    "@IndyDevDan": "UC_x36zCEGilGpB1m-V4gmjg",
+    "@ColeMedin": "UCMwVTLZIRRUyyVrkjDpn4pA",
+    "@AllAboutAI": "UCR9j1jqqB5Rse69wjUnbYwA",
+    "@mreflow": "UChpleBmo18P08aKCIgti38g",
+    "@samwitteveenai": "UC55ODQSvARtgSyc8ThfiepQ",
+    "@1littlecoder": "UCpV_X0VrL8-jg3t6wYGS-1g",
+    "@WesRoth": "UCqcbQf6yw5KzRoDDcZ_wBSw",
+    "@TheAiGrid": "UCbY9xX3_jW5c2fjlZVBI4cg",
+    "@DavidOndrej": "UCPGrgwfbkjTIgPoOh2q1BAg",
+    "@TechWithTim": "UC4JX40jDee_tINbkjycV4Sg",
+    "@NetworkChuck": "UC9x0AN7BWHpCDHSm9NiJFJQ",
+    "@3blue1brown": "UCYO_jab_esuFRV4b17AJtAw",
+    "@ByteByteGo": "UCZgt6AzoyjslHTC9dz0UoTw",
+    "@statquest": "UCtYLUTtgS3k1Fg4y5tAhLbw",
+    "@aiDotEngineer": "UCLKPca3kwwd-B59HNr-_lvA",
+    "@LangChain": "UCC-lyoTfSrcJzA1ab3APAgw",
+    "@GregIsenberg": "UCPjNBjflYl0-HQtUvOx0Ibw",
+    "@rileybrownai": "UCMcoud_ZW7cfxeIugBflSBw",
+    "@NateBJones": "UC0C-17n9iuUQPylguM1d-lQ",
+    "@Jeffsu": "UCwAnu01qlnVg1Ai2AbtTMaA"
+  }
+}

@@ -1,0 +1,82 @@
+# Refreshes the public feed every morning and deploys it to GitHub Pages.
+#
+# Setup (once):
+#   1. Settings -> Pages -> Source: GitHub Actions
+#   2. Settings -> Secrets and variables -> Actions -> New repository secret:
+#        YOUTUBE_API_KEY    (optional, adds YouTube search)
+#        ANTHROPIC_API_KEY  (optional, Claude scoring)
+#      Optional variable SHORTSIGNAL_MODEL, e.g. claude-haiku-5-5
+#
+# Each run starts from yesterday's published library, adds new videos, scores
+# them, and publishes again, so the library grows day by day.
+name: Refresh feed and deploy
+
+on:
+  schedule:
+    - cron: "30 1 * * *" # 01:30 UTC = 07:00 IST
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+      REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Restore yesterday's library
+        run: |
+          mkdir -p data
+          curl -fsSL "${SITE_URL}data/library.json" -o data/library.json \
+            && echo "Restored previous library" \
+            || { rm -f data/library.json; echo "No previous library, starting fresh"; }
+
+      - name: Fetch new Shorts
+        run: npm run fetch
+        env:
+          # Search costs YouTube quota, so only the daily and manual runs use it;
+          # a code push just rebuilds from the channel feeds.
+          YOUTUBE_API_KEY: ${{ github.event_name != 'push' && secrets.YOUTUBE_API_KEY || '' }}
+
+      - name: Score
+        run: npm run score
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SHORTSIGNAL_MODEL: ${{ vars.SHORTSIGNAL_MODEL }}
+
+      - run: npm run build:static
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

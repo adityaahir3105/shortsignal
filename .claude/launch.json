@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["start"],
       "port": 5173
+    },
+    {
+      "name": "shortsignal-static",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "5174", "--directory", "site"],
+      "port": 5174
     }
   ]
 }

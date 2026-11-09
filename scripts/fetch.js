@@ -9,6 +9,10 @@ import { heuristicScore } from "../src/score.js";
 const lib = loadLibrary();
 const { topics } = loadConfig("topics");
 const { handles } = loadConfig("channels");
+// Known channel ids, so a fresh machine (or the GitHub Action) skips the lookups.
+try {
+  lib.channels = { ...loadConfig("channel-ids").ids, ...lib.channels };
+} catch {}
 let added = 0;
 const stats = [];
 

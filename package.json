@@ -13,7 +13,8 @@
     "score": "node --env-file-if-exists=.env scripts/score.js",
     "import:instagram": "node --env-file-if-exists=.env scripts/import-instagram.js",
     "refresh": "npm run fetch && npm run score",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "build:static": "node --env-file-if-exists=.env scripts/build-static.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0"

@@ -151,6 +151,10 @@ select { background: var(--surface-2); border: 1px solid var(--line); border-rad
 .end-inner { max-width: 420px; display: grid; gap: 12px; justify-items: center; }
 .end-inner .big { font-size: 48px; }
 .end-inner h2 { margin: 0; }
+.credit { font-size: 13px; margin-top: 8px; }
+.credit a { color: var(--accent); }
+a.btn-ghost { text-decoration: none; }
+a.btn-ghost[hidden] { display: none; }
 
 /* ---------- Dialog & toast ---------- */
 dialog { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); width: min(460px, calc(100vw - 32px)); padding: 20px; }
