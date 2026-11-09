@@ -9,7 +9,9 @@ import path from "node:path";
 import { ROOT, loadLibrary, loadConfig } from "../src/store.js";
 
 const OUT = path.join(ROOT, "site");
-const SITE_URL = (process.env.SITE_URL || "").replace(/\/?$/, "/");
+// Without SITE_URL (the Cloud Run image) a placeholder is left in, and
+// serve-public.js fills in the real address per request.
+const SITE_URL = (process.env.SITE_URL || "__SITE_URL__").replace(/\/?$/, "/");
 const REPO = process.env.REPO_URL || "https://github.com/adityaahir3105/shortsignal";
 const MAX_AGE_DAYS = 365;
 

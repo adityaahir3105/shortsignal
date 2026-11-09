@@ -27,6 +27,36 @@ The public site is read-only. Each visitor's "Teach me more", "Knew this" and "S
 
 To turn on YouTube search and Claude scoring for the daily build, add `YOUTUBE_API_KEY` and `ANTHROPIC_API_KEY` under Settings → Secrets and variables → Actions.
 
+### Google Cloud (Cloud Run)
+
+Also live at **https://shortsignal-354063467326.asia-south1.run.app** (project `shortsignal-ahir`, region `asia-south1`).
+
+| Piece | What it is |
+|---|---|
+| `shortsignal` (Cloud Run service) | [scripts/serve-public.js](scripts/serve-public.js): serves the UI and `feed.json` from the bucket. Scales to zero. |
+| `shortsignal-refresh` (Cloud Run job) | [scripts/refresh-cloud.js](scripts/refresh-cloud.js): restore library from the bucket, fetch, score, upload the new feed. |
+| `shortsignal-daily` (Cloud Scheduler) | Runs the job at 07:00 IST. |
+| `gs://shortsignal-ahir-data` | Private bucket holding `feed.json` and `library.json`. |
+| `shortsignal-runner` | Service account used by all three, with access to that bucket only. |
+
+Redeploy after code changes:
+
+```bash
+gcloud run deploy shortsignal --source . --region asia-south1 --project shortsignal-ahir
+```
+
+Then point the job at the new image:
+
+```bash
+gcloud run jobs update shortsignal-refresh --region asia-south1 --project shortsignal-ahir --image "$(gcloud run services describe shortsignal --region asia-south1 --project shortsignal-ahir --format='value(spec.template.spec.containers[0].image)')"
+```
+
+Run a refresh by hand:
+
+```bash
+gcloud run jobs execute shortsignal-refresh --region asia-south1 --project shortsignal-ahir
+```
+
 ## Where videos come from
 
 1. **YouTube channel RSS feeds** (no key). Each channel in [config/channels.json](config/channels.json) has a public feed of its latest 15 uploads. Shorts are linked as `/shorts/`, so only those are kept. Add your favourite creators there.
