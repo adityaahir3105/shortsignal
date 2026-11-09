@@ -218,7 +218,7 @@ async function load() {
 
 state.sound = (() => { try { return sessionStorage.getItem("ss-sound") === "1"; } catch { return false; } })();
 const isPhone = () => matchMedia("(max-width: 760px), (pointer: coarse)").matches;
-const PLAYING = 1, BUFFERING = 3;
+const PLAYING = 1, PAUSED = 2, BUFFERING = 3;
 
 let ytApi;
 function loadYouTubeApi() {
@@ -253,14 +253,15 @@ function startPlayback(card, { withSound = false } = {}) {
   // Generous timeout: on a slow mobile connection a video can take a few seconds
   // to start, and that is not the same as the browser blocking it.
   card._watchdog = setTimeout(() => {
-    if (!card.classList.contains("active") || card._player !== p) return;
+    // Never fight the viewer: a video they paused stays paused.
+    if (!card.classList.contains("active") || card._player !== p || card.classList.contains("paused")) return;
     const s = p.getPlayerState?.();
     if (s === PLAYING || s === BUFFERING) return;
     p.mute();
     p.playVideo();
     card._watchdog = setTimeout(() => {
       const s2 = p.getPlayerState?.();
-      if (card._player === p && s2 !== PLAYING && s2 !== BUFFERING) setBlocked(card, true);
+      if (card._player === p && !card.classList.contains("paused") && s2 !== PLAYING && s2 !== BUFFERING) setBlocked(card, true);
     }, 2500);
   }, 3500);
 }
@@ -271,18 +272,22 @@ function onPlaying(card) {
   setBlocked(card, false);
   card.classList.remove("paused");
   $(".media iframe", card)?.classList.add("ready");
-  if (state.sound && p.isMuted()) {
+  // Apply the viewer's sound choice, but only try once per video. Some browsers
+  // (mainly iPhone Safari) pause a video that is unmuted without a tap inside
+  // it; retrying would make it stop and start over and over. If it's refused,
+  // keep playing muted; the speaker shows muted and one tap brings sound back.
+  if (state.sound && p.isMuted() && !card._triedUnmute) {
+    card._triedUnmute = true;
     p.unMute();
     p.setVolume(100);
     setTimeout(() => updateSoundButton(card), 300); // isMuted() updates a moment later
-    // Some browsers (mainly iPhone Safari) pause a video that is unmuted without
-    // a tap inside it. If that happens, keep it playing muted; the speaker
-    // button then shows muted and one tap brings the sound back.
     clearTimeout(card._unmuteCheck);
     card._unmuteCheck = setTimeout(() => {
-      if (card._player !== p) return;
-      const s = p.getPlayerState?.();
-      if (s !== PLAYING && s !== BUFFERING) { p.mute(); p.playVideo(); }
+      if (card._player !== p || !card.classList.contains("active")) return;
+      if (p.getPlayerState?.() === PAUSED && !card.classList.contains("paused")) {
+        p.mute();
+        p.playVideo();
+      }
       updateSoundButton(card);
     }, 800);
   }
@@ -347,6 +352,10 @@ async function mountYouTube(card, v) {
 
 function activate(card) {
   if (!card || !card.dataset.id) return; // end, empty and loading cards have no player
+  // Already playing this one. On phones the address bar sliding in and out
+  // resizes the page and re-fires the visibility checks; restarting here
+  // would mute, un-pause or stutter the video.
+  if (card.classList.contains("active")) return;
   for (const other of feedEl.querySelectorAll(".card.active")) if (other !== card) deactivate(other);
   card.classList.add("active");
   updateSoundButton(card); // the card was rendered before any sound choice was made
@@ -363,8 +372,6 @@ function activate(card) {
       f.addEventListener("load", () => setTimeout(() => f.classList.add("ready"), 250));
       media.appendChild(f);
     }
-  } else if (card._player) {
-    startPlayback(card);
   }
   if (!state.seenSent.has(v.id)) {
     state.seenSent.add(v.id);
@@ -377,6 +384,7 @@ function deactivate(card) {
   card.classList.remove("active", "paused", "blocked");
   clearTimeout(card._watchdog);
   clearTimeout(card._unmuteCheck);
+  card._triedUnmute = false;
   try { card._player?.destroy?.(); } catch {}
   card._player = null;
   $(".media", card)?.querySelectorAll("iframe, .yt-host").forEach((el) => el.remove());
@@ -451,6 +459,15 @@ function activateCardInView() {
   const card = cards[Math.round(feedEl.scrollTop / Math.max(1, feedEl.clientHeight))];
   if (card && card.dataset.id && !card.classList.contains("active")) activate(card);
 }
+// Phones pause video when you switch apps or lock the screen. Coming back,
+// carry on where you were, unless you had paused it yourself.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  const card = $(".card.active");
+  const p = card?._player;
+  if (p?.getPlayerState?.() === PAUSED && !card.classList.contains("paused")) p.playVideo();
+});
+
 let settleTimer;
 feedEl.addEventListener("scroll", () => {
   clearTimeout(settleTimer);
