@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>ShortSignal</title>
+  <meta name="description" content="A curated feed of short AI and Claude videos. Learning, not doomscrolling." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23d97757'/><path d='M7 20h4l3-9 4 13 3-7h4' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" /><path d="M7 20h4l3-9 4 13 3-7h4" /></svg>
+      <span>ShortSignal</span>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Feed">
+      <button role="tab" data-mode="daily" aria-selected="true">Today's 10</button>
+      <button role="tab" data-mode="explore" aria-selected="false">Explore</button>
+      <button role="tab" data-mode="saves" aria-selected="false">Your IG saves</button>
+      <button role="tab" data-mode="saved" aria-selected="false">Saved</button>
+    </nav>
+    <div class="tools">
+      <select id="topic" aria-label="Topic"><option value="">All topics</option></select>
+      <button id="addBtn" class="btn-ghost" title="Add a YouTube or Instagram link">+ Add</button>
+    </div>
+  </header>
+
+  <div class="progress" id="progress" hidden><div class="bar" id="progressBar"></div><span id="progressText"></span></div>
+
+  <main id="feed" class="feed" aria-live="polite"></main>
+
+  <dialog id="addDialog">
+    <form method="dialog" id="addForm">
+      <h2>Add a video</h2>
+      <p class="muted">Paste a YouTube Short or Instagram Reel you liked. Add a note about what it covers, so it can be scored.</p>
+      <label>Link<input name="url" type="url" required placeholder="https://www.instagram.com/reel/..." /></label>
+      <label>What is it about? <span class="muted">(optional)</span><textarea name="note" rows="3" placeholder="e.g. How Claude Code hooks run a linter after every edit"></textarea></label>
+      <p class="form-msg" id="addMsg"></p>
+      <div class="row">
+        <button value="cancel" formnovalidate class="btn-ghost">Cancel</button>
+        <button id="addSubmit" value="default" class="btn-primary">Add to library</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

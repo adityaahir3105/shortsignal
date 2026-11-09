@@ -1,0 +1,21 @@
+{
+  "name": "shortsignal",
+  "version": "0.1.0",
+  "description": "A HackerTube-style curated feed of short AI / Claude videos from YouTube Shorts and Instagram Reels.",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "fetch": "node --env-file-if-exists=.env scripts/fetch.js",
+    "score": "node --env-file-if-exists=.env scripts/score.js",
+    "import:instagram": "node --env-file-if-exists=.env scripts/import-instagram.js",
+    "refresh": "npm run fetch && npm run score",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0"
+  }
+}

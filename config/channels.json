@@ -1,0 +1,33 @@
+{
+  "_comment": "YouTube handles whose public RSS feeds are scanned for Shorts (no API key needed). Add or remove handles freely; unknown handles are skipped with a warning.",
+  "handles": [
+    "@anthropic-ai",
+    "@AndrejKarpathy",
+    "@OpenAI",
+    "@GoogleDeepMind",
+    "@Fireship",
+    "@aiexplained-official",
+    "@TwoMinutePapers",
+    "@matthew_berman",
+    "@mreflow",
+    "@ColeMedin",
+    "@IndyDevDan",
+    "@AllAboutAI",
+    "@samwitteveenai",
+    "@1littlecoder",
+    "@WesRoth",
+    "@TheAiGrid",
+    "@DavidOndrej",
+    "@TechWithTim",
+    "@NetworkChuck",
+    "@3blue1brown",
+    "@statquest",
+    "@ByteByteGo",
+    "@LangChain",
+    "@aiDotEngineer",
+    "@GregIsenberg",
+    "@rileybrownai",
+    "@NateBJones",
+    "@Jeffsu"
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "topics": [
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "keywords": ["claude code", "claude cli", "slash command", "subagent", "hooks", "claude.md", "skills"],
+      "searches": ["claude code tips", "claude code tutorial"]
+    },
+    {
+      "id": "claude",
+      "name": "Claude & Anthropic",
+      "keywords": ["claude", "anthropic", "opus", "sonnet", "haiku", "fable"],
+      "searches": ["claude ai tips", "anthropic claude explained"]
+    },
+    {
+      "id": "agents-mcp",
+      "name": "Agents & MCP",
+      "keywords": ["agent", "agents", "agentic", "mcp", "model context protocol", "tool use", "tool calling", "workflow"],
+      "searches": ["ai agents explained", "mcp server tutorial"]
+    },
+    {
+      "id": "prompting",
+      "name": "Prompting",
+      "keywords": ["prompt", "prompting", "prompt engineering", "system prompt", "context engineering"],
+      "searches": ["prompt engineering tips", "context engineering"]
+    },
+    {
+      "id": "llm-fundamentals",
+      "name": "How LLMs work",
+      "keywords": ["llm", "transformer", "attention", "tokens", "tokenizer", "embedding", "neural network", "fine-tuning", "rag", "training"],
+      "searches": ["how llms work", "transformers explained"]
+    },
+    {
+      "id": "ai-coding",
+      "name": "AI coding",
+      "keywords": ["vibe coding", "coding agent", "cursor", "codex", "copilot", "ai coding", "build an app", "developer"],
+      "searches": ["ai coding workflow", "vibe coding tips"]
+    }
+  ]
+}
